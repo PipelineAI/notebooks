@@ -1,4 +1,7 @@
-Derived from https://github.com/awslabs/amazon-sagemaker-examples/tree/master/scientific_details_of_algorithms/lda_topic_modeling
+Derived fromthe following:
+
+* https://github.com/awslabs/amazon-sagemaker-examples
+* https://github.com/juliensimon/dlnotebooks
 
 # Amazon SageMaker Examples
 
