@@ -105,17 +105,9 @@
     "summary ... 37.3/s Avg:  2586 Min:  2331 Max:  2729 Err:     0 (0.00%)\n",
     "```\n"
    ]
-  },
-  {
-   "cell_type": "code",
-   "execution_count": null,
-   "metadata": {},
-   "outputs": [],
-   "source": []
-  },
+  }
  ],
  "metadata": {
-  "anaconda-cloud": {},
   "kernelspec": {
    "display_name": "Python 3",
    "language": "python",
