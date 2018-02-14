@@ -1,7 +1,6 @@
-Derived fromthe following:
-
+Derived from 
 * https://github.com/awslabs/amazon-sagemaker-examples
-* https://github.com/juliensimon/dlnotebooks
+* https://github.com/juliensimon/dlnotebooks/
 
 # Amazon SageMaker Examples
 
@@ -35,6 +34,7 @@ These examples provide quick walkthroughs to get you up and running with Amazon 
 - [XGBoost for regression](introduction_to_amazon_algorithms/xgboost_abalone) predicts the age of abalone ([Abalone dataset](https://www.csie.ntu.edu.tw/~cjlin/libsvmtools/datasets/regression.html)) using regression from Amazon SageMaker's implementation of [XGBoost](https://github.com/dmlc/xgboost).
 - [XGBoost for multi-class classification](introduction_to_amazon_algorithms/xgboost_mnist) uses Amazon SageMaker's implementation of [XGBoost](https://github.com/dmlc/xgboost) to classify handwritten digits from the MNIST dataset as one of the ten digits using a multi-class classifier. Both single machine and distributed use-cases are presented.
 - [DeepAR for time series forecasting](introduction_to_amazon_algorithms/deepar_synthetic) illustrates how to use the Amazon SageMaker DeepAR algorithm for time series forecasting on a synthetically generated data set.
+- [BlazingText Word2Vec](introduction_to_amazon_algorithms/blazingtext_word2vec_text8) generates Word2Vec embeddings from a cleaned text dump of Wikipedia articles using SageMaker's fast and scalable BlazingText implementation.
 
 ### Scientific Details of Algorithms
 
@@ -71,6 +71,12 @@ These examples focus on the Amazon SageMaker Python SDK which allows you to writ
 - [Introduction to Estimators in TensorFlow](sagemaker-python-sdk/tensorflow_iris_dnn_classifier_using_estimators)
 - [TensorFlow and TensorBoard](sagemaker-python-sdk/tensorflow_resnet_cifar10_with_tensorboard)
 - [Distributed TensorFlow](sagemaker-python-sdk/tensorflow_distributed_mnist)
+
+### Using Amazon SageMaker with Apache Spark
+
+These examples show how to use Amazon SageMaker for model training, hosting, and inference through Apache Spark using [SageMaker Spark](https://github.com/aws/sagemaker-spark). SageMaker Spark allows you to interleave Spark Pipeline stages with Pipeline stages that interact with Amazon SageMaker.
+
+- [MNIST with SageMaker PySpark](sagemaker-spark/pyspark_mnist)
 
 ### Under Development
 
