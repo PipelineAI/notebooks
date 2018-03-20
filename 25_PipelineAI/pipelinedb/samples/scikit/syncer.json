@@ -1,0 +1,30 @@
+{
+  "thrift": {
+    "host": "localhost",
+    "port": 31998
+  },
+  "syncingStrategy": "eager",
+  "project": {
+    "name": "mnist_gridsearch_cross_validation",
+    "author": "chris_fregly",
+    "description": "mnist gridsearch cross validation"
+  },
+  "experiment": {
+    "name": "mnist_gridsearch_cv_experiment_1",
+    "description": "mnist gridsearch cross validation experiment 1"
+  },
+  "experimentRun": {
+    "description": "mnist gridsearch"
+  },
+  "shouldCountRows": false,
+  "shouldStoreGSCVE": false,
+  "shouldStoreSpecificModels": false,
+  "git": {
+    "versionCode": "no",
+    "username": "default",
+    "accessToken": null,
+    "repo": null,
+    "exptDir": null,
+    "repoDir": null
+  }
+}
