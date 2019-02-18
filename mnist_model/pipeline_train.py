@@ -1,244 +1,238 @@
-#  Copyright 2017 The TensorFlow Authors. All Rights Reserved.
+import tensorflow as tf
+
+from keras.models import Model
+from keras.callbacks import Callback
+from keras.layers import Dense, Flatten
+import mlflow
+from datetime import datetime
+import time
+import math
+import numpy as np
+from image_pyfunc import log_model
+import os
+import yaml
+import click
+import matplotlib.pyplot as plt
+from keras.utils import plot_model
+
+
 #
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
+# See https://nbviewer.jupyter.org/github/WillKoehrsen/Data-Analysis/blob/master/slack_interaction/Interacting%20with%20Slack.ipynb for more details.
 #
-#   http://www.apache.org/licenses/LICENSE-2.0
-#
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
-"""Convolutional Neural Network Estimator for MNIST, built with tf.layers."""
+class SlackLogger(Callback):
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
+    """Custom Keras callback that posts to Slack while training a neural network"""
 
-from absl import app as absl_app
-from absl import flags
-import tensorflow as tf  # pylint: disable=g-bad-import-order
+    def __init__(self,
+                 channel,
+                 slack_webhook_url):
 
-from official.mnist import dataset
-from official.utils.flags import core as flags_core
-from official.utils.logs import hooks_helper
-from official.utils.misc import distribution_utils
-from official.utils.misc import model_helpers
+        self.channel = channel
+        self.slack_webhook_url = slack_webhook_url
 
+    def file_upload(self,
+                    path,
+                    title):
+        pass
 
-LEARNING_RATE = 1e-4
+    def report_stats(self, text):
+        """Report training stats"""
 
+        import subprocess
+        try:
+            cmd = 'curl -X POST --data-urlencode "payload={\\"unfurl_links\\": true, \\"channel\\": \\"%s\\", \\"username\\": \\"pipelineai_bot\\", \\"text\\": \\"%s\\"}" %s' % (self.channel, text, self.slack_webhook_url)
 
-def create_model(data_format):
-  """Model to recognize digits in the MNIST dataset.
+            response = subprocess.check_output(cmd, shell=True).decode('utf-8')
+            return True
+        except:
+            return False
 
-  Network structure is equivalent to:
-  https://github.com/tensorflow/tensorflow/blob/r1.5/tensorflow/examples/tutorials/mnist/mnist_deep.py
-  and
-  https://github.com/tensorflow/models/blob/master/tutorials/image/mnist/convolutional.py
+    def on_train_begin(self, logs={}):
+        from timeit import default_timer as timer
+        self.report_stats(text=f'Training started at {datetime.now()}')
 
-  But uses the tf.keras API.
+        self.start_time = timer()
+        self.train_acc = []
+        self.valid_acc = []
+        self.train_loss = []
+        self.valid_loss = []
+        self.n_epochs = 0
 
-  Args:
-    data_format: Either 'channels_first' or 'channels_last'. 'channels_first' is
-      typically faster on GPUs while 'channels_last' is typically faster on
-      CPUs. See
-      https://www.tensorflow.org/performance/performance_guide#data_formats
+    def on_epoch_end(self, batch, logs={}):
+        self.train_acc.append(logs.get('acc'))
+        self.valid_acc.append(logs.get('val_acc'))
+        self.train_loss.append(logs.get('loss'))
+        self.valid_loss.append(logs.get('val_loss'))
+        self.n_epochs += 1
 
-  Returns:
-    A tf.keras.Model.
-  """
-  if data_format == 'channels_first':
-    input_shape = [1, 28, 28]
-  else:
-    assert data_format == 'channels_last'
-    input_shape = [28, 28, 1]
+        message = f'Epoch: {self.n_epochs} Training Loss: {self.train_loss[-1]:.4f} Validation Loss: {self.valid_loss[-1]:.4f}'
 
-  l = tf.keras.layers
-  max_pool = l.MaxPooling2D(
-      (2, 2), (2, 2), padding='same', data_format=data_format)
-  # The model consists of a sequential chain of layers, so tf.keras.Sequential
-  # (a subclass of tf.keras.Model) makes for a compact description.
-  return tf.keras.Sequential(
-      [
-          l.Reshape(
-              target_shape=input_shape,
-              input_shape=(28 * 28,)),
-          l.Conv2D(
-              32,
-              5,
-              padding='same',
-              data_format=data_format,
-              activation=tf.nn.relu),
-          max_pool,
-          l.Conv2D(
-              64,
-              5,
-              padding='same',
-              data_format=data_format,
-              activation=tf.nn.relu),
-          max_pool,
-          l.Flatten(),
-          l.Dense(1024, activation=tf.nn.relu),
-          l.Dropout(0.4),
-          l.Dense(10)
-      ])
+        self.report_stats(message)
 
+    def on_train_end(self, logs={}):
+        best_epoch = np.argmin(self.valid_loss)
+        valid_loss = self.valid_loss[best_epoch]
+        train_loss = self.train_loss[best_epoch]
+        train_acc = self.train_acc[best_epoch]
+        valid_acc = self.valid_acc[best_epoch]
 
-def define_mnist_flags():
-  flags_core.define_base()
-  flags_core.define_image()
-  flags.adopt_module_key_flags(flags_core)
-  flags_core.set_defaults(data_dir='/tmp/mnist_data',
-                          model_dir='checkpoint/',
-                          export_dir='pipeline_tfserving',
-			  batch_size=1024,
-                          train_epochs=2)
+        message = f'Trained for {self.n_epochs} epochs. Best epoch was {best_epoch + 1}.'
+        self.report_stats(message)
+        message = f'Best validation loss = {valid_loss:.4f} Training Loss = {train_loss:.2f} Validation accuracy = {100*valid_acc:.2f}%'
+        self.report_stats(message)
 
+class MLflowLogger(Callback):
+    """
+    Keras callback for logging metrics and final model with MLflow.
 
-def model_fn(features, labels, mode, params):
-  """The model_fn argument for creating an Estimator."""
-  model = create_model(params['data_format'])
-  image = features
-  if isinstance(image, dict):
-    image = features['image']
+    Metrics are logged after every epoch. The logger keeps track of the best model based on the
+    validation metric. At the end of the training, the best model is logged with MLflow.
+    """
+    def __init__(self, model, x_train, y_train, x_test, y_test,
+                 **kwargs):
+        self._model = model
+        self._best_val_loss = math.inf
+        self._train = (x_train, y_train)
+        self._valid = (x_test, y_test)
+        self._pyfunc_params = kwargs
+        self._best_weights = None
 
-  if mode == tf.estimator.ModeKeys.PREDICT:
-    logits = model(image, training=False)
-    predictions = {
-        'classes': tf.argmax(logits, axis=1),
-        'probabilities': tf.nn.softmax(logits),
-    }
-    return tf.estimator.EstimatorSpec(
-        mode=tf.estimator.ModeKeys.PREDICT,
-        predictions=predictions,
-        export_outputs={
-            'classify': tf.estimator.export.PredictOutput(predictions)
-        })
-  if mode == tf.estimator.ModeKeys.TRAIN:
-    optimizer = tf.train.AdamOptimizer(learning_rate=LEARNING_RATE)
+    def on_epoch_end(self, epoch, logs=None):
+        """
+        Log Keras metrics with MLflow. Update the best model if the model improved on the validation
+        data.
+        """
+        if not logs:
+            return
+        for name, value in logs.items():
+            if name.startswith("val_"):
+                name = "valid_" + name[4:]
+            else:
+                name = "train_" + name
+            mlflow.log_metric(name, value)
+        val_loss = logs["val_loss"]
+        if val_loss < self._best_val_loss:
+            # Save the "best" weights
+            self._best_val_loss = val_loss
+            self._best_weights = [x.copy() for x in self._model.get_weights()]
 
-    # If we are running multi-GPU, we need to wrap the optimizer.
-    if params.get('multi_gpu'):
-      optimizer = tf.contrib.estimator.TowerOptimizer(optimizer)
-
-    logits = model(image, training=True)
-    loss = tf.losses.sparse_softmax_cross_entropy(labels=labels, logits=logits)
-    accuracy = tf.metrics.accuracy(
-        labels=labels, predictions=tf.argmax(logits, axis=1))
-
-    # Name tensors to be logged with LoggingTensorHook.
-    tf.identity(LEARNING_RATE, 'learning_rate')
-    tf.identity(loss, 'cross_entropy')
-    tf.identity(accuracy[1], name='train_accuracy')
-
-    # Save accuracy scalar to Tensorboard output.
-    tf.summary.scalar('train_accuracy', accuracy[1])
-
-    return tf.estimator.EstimatorSpec(
-        mode=tf.estimator.ModeKeys.TRAIN,
-        loss=loss,
-        train_op=optimizer.minimize(loss, tf.train.get_or_create_global_step()))
-  if mode == tf.estimator.ModeKeys.EVAL:
-    logits = model(image, training=False)
-    loss = tf.losses.sparse_softmax_cross_entropy(labels=labels, logits=logits)
-    return tf.estimator.EstimatorSpec(
-        mode=tf.estimator.ModeKeys.EVAL,
-        loss=loss,
-        eval_metric_ops={
-            'accuracy':
-                tf.metrics.accuracy(
-                    labels=labels, predictions=tf.argmax(logits, axis=1)),
-        })
+    def on_train_end(self, *args, **kwargs):
+        """
+        Log the best model with MLflow and evaluate it on the train and validation data so that the
+        metrics stored with MLflow reflect the logged model.
+        """
+        self._model.set_weights(self._best_weights)
+        x, y = self._train
+        train_res = self._model.evaluate(x=x, y=y)
+        for name, value in zip(self._model.metrics_names, train_res):
+            mlflow.log_metric("train_{}".format(name), value)
+        x, y = self._valid
+        valid_res = self._model.evaluate(x=x, y=y)
+        for name, value in zip(self._model.metrics_names, valid_res):
+            mlflow.log_metric("valid_{}".format(name), value)
 
 
-def run_mnist(flags_obj):
-  """Run MNIST training and eval loop.
+@click.command(help="Trains a Keras model mnist dataset."
+                    "The model and its metrics are logged with mlflow.")
+@click.option("--epochs", type=click.INT, default=1, help="Maximum number of epochs to evaluate.")
+@click.option("--batch-size", type=click.INT, default=16,
+              help="Batch size passed to the learning algo.")
+def run(epochs, batch_size):
+    tracking_uri = 'https://community.cloud.pipeline.ai'
 
-  Args:
-    flags_obj: An object containing parsed flag values.
-  """
-  model_helpers.apply_clean(flags_obj)
-  model_function = model_fn
+    mlflow.set_tracking_uri(tracking_uri)
 
-  # Get number of GPUs as defined by the --num_gpus flags and the number of
-  # GPUs available on the machine.
-  num_gpus = flags_core.get_num_gpus(flags_obj)
-  multi_gpu = num_gpus > 1
+    # This will create and set the experiment
+    mlflow.set_experiment('%s-mnist' % int(1000 * time.time()))
 
-  if multi_gpu:
-    # Validate that the batch size can be split into devices.
-    distribution_utils.per_device_batch_size(flags_obj.batch_size, num_gpus)
+    with mlflow.start_run() as run:
+        mlflow.log_param("epochs", str(epochs))
+        mlflow.log_param("batch_size", str(batch_size))
 
-    # There are two steps required if using multi-GPU: (1) wrap the model_fn,
-    # and (2) wrap the optimizer. The first happens here, and (2) happens
-    # in the model_fn itself when the optimizer is defined.
-    model_function = tf.contrib.estimator.replicate_model_fn(
-        model_fn, loss_reduction=tf.losses.Reduction.MEAN,
-        devices=["/device:GPU:%d" % d for d in range(num_gpus)])
+        mnist = tf.keras.datasets.mnist
 
-  data_format = flags_obj.data_format
-  if data_format is None:
-    data_format = ('channels_first'
-                   if tf.test.is_built_with_cuda() else 'channels_last')
-  mnist_classifier = tf.estimator.Estimator(
-      model_fn=model_function,
-      model_dir=flags_obj.model_dir,
-      params={
-          'data_format': data_format,
-          'multi_gpu': multi_gpu
-      })
+        (x_train, y_train), (x_test, y_test) = mnist.load_data()
+        x_train, x_test = x_train / 255.0, x_test / 255.0
 
-  # Set up training and evaluation input functions.
-  def train_input_fn():
-    """Prepare data for training."""
+        model = tf.keras.models.Sequential([
+          tf.keras.layers.Flatten(input_shape=(28, 28)),
+          tf.keras.layers.Dense(512, activation=tf.nn.relu),
+          tf.keras.layers.Dropout(0.2),
+          tf.keras.layers.Dense(10, activation=tf.nn.softmax)
+        ])
 
-    # When choosing shuffle buffer sizes, larger sizes result in better
-    # randomness, while smaller sizes use less memory. MNIST is a small
-    # enough dataset that we can easily shuffle the full epoch.
-    ds = dataset.train(flags_obj.data_dir)
-    ds = ds.cache().shuffle(buffer_size=50000).batch(flags_obj.batch_size)
+        model.compile(optimizer='adam',
+                      loss='sparse_categorical_crossentropy',
+                      metrics=['accuracy'])
 
-    # Iterate through the dataset a set number (`epochs_between_evals`) of times
-    # during each training session.
-    ds = ds.repeat(flags_obj.epochs_between_evals)
-    return ds
+        history = model.fit(
+                    x=x_train,
+                    y=y_train,
+                    validation_data=(x_test, y_test),
+                    epochs=epochs,
+                    batch_size=batch_size,
+                    callbacks=[MLflowLogger(model=model,
+                                            x_train=x_train,
+                                            y_train=y_train,
+                                            x_test=x_test,
+                                            y_test=y_test,
+                                            domain={},
+                                            artifact_path="model",
+                                            image_dims=(28, 28)),
+                               SlackLogger(channel='#slack-after-dark',
+                                           slack_webhook_url='https://hooks.slack.com/services/T/B/G')
+                              ])
 
-  def eval_input_fn():
-    return dataset.test(flags_obj.data_dir).batch(
-        flags_obj.batch_size).make_one_shot_iterator().get_next()
+        model.evaluate(x_test, y_test)
 
-  # Set up hook that outputs training logs every 100 steps.
-  train_hooks = hooks_helper.get_train_hooks(
-      flags_obj.hooks, model_dir=flags_obj.model_dir,
-      batch_size=flags_obj.batch_size)
+        saved_model_path = tf.contrib.saved_model.save_keras_model(model, "./pipeline_tfserving")
+        if type(saved_model_path) != str:
+            saved_model_path = saved_model_path.decode('utf-8')
 
-  # Train and evaluate model.
-  for _ in range(flags_obj.train_epochs // flags_obj.epochs_between_evals):
-    mnist_classifier.train(input_fn=train_input_fn, hooks=train_hooks)
-    eval_results = mnist_classifier.evaluate(input_fn=eval_input_fn)
-    print('\nEvaluation results:\n\t%s\n' % eval_results)
+        # From the following:  https://keras.io/visualization/
+        print(history)
+        print(history.history)
 
-    if model_helpers.past_stop_threshold(flags_obj.stop_threshold,
-                                         eval_results['accuracy']):
-      break
+        plot_model(model, to_file='viz_pipeline_model.png')
+ 
+        # Plot training & validation accuracy values
+        plt.plot(history.history['acc'])
+        plt.plot(history.history['val_acc'])
+        plt.title('Model accuracy')
+        plt.ylabel('Accuracy')
+        plt.xlabel('Epoch')
+        plt.legend(['Train', 'Test'], loc='upper left')
+        plt.show()
+        plt.savefig('viz_training_accuracy.png')
 
-  # Export the model
-  if flags_obj.export_dir is not None:
-    image = tf.placeholder(tf.float32, [None, 28, 28])
-    input_fn = tf.estimator.export.build_raw_serving_input_receiver_fn({
-        'image': image,
-    })
-    mnist_classifier.export_savedmodel(flags_obj.export_dir, input_fn)
+        # Plot training & validation loss values
+        plt.plot(history.history['loss'])
+        plt.plot(history.history['val_loss'])
+        plt.title('Model loss')
+        plt.ylabel('Loss')
+        plt.xlabel('Epoch')
+        plt.legend(['Train', 'Test'], loc='upper left')
+        plt.show()
+        plt.savefig('viz_training_loss.png')
 
+    mlflow.log_artifacts(saved_model_path)
+    mlflow.log_artifact('pipeline_conda_environment.yaml')
+    mlflow.log_artifact('pipeline_train.py')
+    mlflow.log_artifact('image_pyfunc.py')
+    mlflow.log_artifact('pipeline_invoke_python.py')
+    mlflow.log_artifact('pipeline_modelserver.properties')
+    mlflow.log_artifact('pipeline_tfserving.properties')
+    mlflow.log_artifact('MLproject')
+    mlflow.log_artifact('pipeline_condarc')
+    mlflow.log_artifact('pipeline_ignore')
+    mlflow.log_artifact('pipeline_setup.sh')
+    mlflow.log_artifact('viz_pipeline_model.png')
+    mlflow.log_artifact('viz_training_accuracy.png')
+    mlflow.log_artifact('viz_training_loss.png')
 
-def main(_):
-  run_mnist(flags.FLAGS)
+    print(mlflow.get_artifact_uri())
 
+    print('Navigate to %s/admin/tracking/#/experiments/%s/runs/%s' % (tracking_uri, run.info.experiment_id, run.info.run_uuid))
 
 if __name__ == '__main__':
-  tf.logging.set_verbosity(tf.logging.INFO)
-  define_mnist_flags()
-  absl_app.run(main)
+    run()
