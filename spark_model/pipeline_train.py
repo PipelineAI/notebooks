@@ -48,7 +48,8 @@ if __name__ == "__main__":
     
         print("Pi is roughly %f" % calculated_pi)
     
-        error = abs(math.pi - calculated_pi)        
+        error_pct = abs(math.pi - calculated_pi) * 100        
+
         mlflow.log_metric('error_pct', error_pct)
 
     spark.stop()
